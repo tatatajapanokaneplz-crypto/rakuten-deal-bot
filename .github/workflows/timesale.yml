@@ -1,0 +1,33 @@
+name: Timesale Track (速報トラック)
+
+on:
+  schedule:
+    # 日本時間 9:00, 13:00, 20:00 (UTC 0:00, 4:00, 11:00) の1日3回
+    - cron: "0 0,4,11 * * *"
+  workflow_dispatch: {}  # 手動実行用(動作確認時に使う)
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - name: Run timesale track
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          RAKUTEN_APP_ID: ${{ secrets.RAKUTEN_APP_ID }}
+          RAKUTEN_ACCESS_KEY: ${{ secrets.RAKUTEN_ACCESS_KEY }}
+          RAKUTEN_ALLOWED_SITE: ${{ secrets.RAKUTEN_ALLOWED_SITE }}
+          RAKUTEN_AFFILIATE_ID: ${{ secrets.RAKUTEN_AFFILIATE_ID }}
+          BUFFER_ACCESS_TOKEN: ${{ secrets.BUFFER_ACCESS_TOKEN }}
+          BUFFER_CHANNEL_ID_X: ${{ secrets.BUFFER_CHANNEL_ID_X }}
+          BUFFER_CHANNEL_ID_THREADS: ${{ secrets.BUFFER_CHANNEL_ID_THREADS }}
+          HEALTHCHECK_URL_TIMESALE: ${{ secrets.HEALTHCHECK_URL_TIMESALE }}
+        run: python -m src.main_timesale

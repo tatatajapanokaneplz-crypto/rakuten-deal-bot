@@ -1,14 +1,7 @@
 #!/usr/bin/env python3
 """
-Buffer organization配下�E全チャンネル(接続済みSNSアカウンチEを一覧表示するスクリプト、E
-目皁E
-  X(@rakuten_granpa)とThreads(rakuten_granpa)それぞれのBufferチャンネルIDめE  ログから目視で特定し、GitHub Secrets(BUFFER_CHANNEL_ID_X / BUFFER_CHANNEL_ID_THREADS)
-  に登録するための一時的な調査用スクリプト、E
-忁E��な環墁E��数:
-  BUFFER_ACCESS_TOKEN     Buffer個人APIキー(posts:read権限があればOK)
-  BUFFER_ORGANIZATION_ID  Buffer絁E��ID
-
-用途が終わったら本スクリプトと呼び出し用ワークフローは削除して構わなぁE��E"""
+Buffer organization配下の全チャンネル(接続済みSNSアカウント)を一覧表示するスクリプト。
+"""
 
 import json
 import os
@@ -72,16 +65,16 @@ def main() -> None:
     organization_id = os.environ.get("BUFFER_ORGANIZATION_ID")
 
     if not access_token:
-        print("環墁E��数 BUFFER_ACCESS_TOKEN が設定されてぁE��せん、E, file=sys.stderr)
+        print("環境変数 BUFFER_ACCESS_TOKEN が設定されていません。", file=sys.stderr)
         sys.exit(1)
     if not organization_id:
-        print("環墁E��数 BUFFER_ORGANIZATION_ID が設定されてぁE��せん、E, file=sys.stderr)
+        print("環境変数 BUFFER_ORGANIZATION_ID が設定されていません。", file=sys.stderr)
         sys.exit(1)
 
     channels = fetch_channels(access_token, organization_id)
 
     if not channels:
-        print("チャンネルが見つかりませんでした。絁E��IDやAPIキーの権限を確認してください、E)
+        print("チャンネルが見つかりませんでした。組織IDやAPIキーの権限を確認してください。")
         return
 
     print(f"取得したチャンネル数: {len(channels)}")
@@ -100,9 +93,9 @@ def main() -> None:
         print("-" * 60)
 
     print(
-        "\n上記�E一覧から、serviceがX/twitter系のも�Eと threads のも�Eを探し、E
-        "それぞれの id めEBUFFER_CHANNEL_ID_X / BUFFER_CHANNEL_ID_THREADS として"
-        "GitHub Secretsに登録してください、E
+        "\n上記の一覧から、serviceがX/twitter系のものと threads のものを探し、"
+        "それぞれの id を BUFFER_CHANNEL_ID_X / BUFFER_CHANNEL_ID_THREADS として"
+        "GitHub Secretsに登録してください。"
     )
 
 

@@ -83,7 +83,7 @@ def check_affiliate_id_present(url: str, affiliate_id: str) -> CheckResult:
 
 def _extract_core_name(item_name: str, max_len: int = 20) -> str:
     """商品名の先頭部分(固有名詞が集中しやすい)を抽出する簡易ロジック。"""
-    cleaned = re.sub(r"[\[\]【】].*?[\]\]】]", "", item_name)  # 記号で囲まれた装飾部分を除去
+    cleaned = re.sub(r"^[\[【].*?[\]】]\s*", "", item_name)  # 先頭の装飾タグのみ除去(途中の【】は残す)
     return cleaned.strip()[:max_len]
 
 

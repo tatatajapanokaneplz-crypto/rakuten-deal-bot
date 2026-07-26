@@ -2,13 +2,18 @@
 楽天ウェブサービスAPI(https://webservice.rakuten.co.jp/)のラッパー。
 
 【2026-07 確認済み・重要】2026年5月14日に旧エンドポイント(app.rakuten.co.jp)は
-完全停止し、新エンドポイント(openapi.rakuten.co.jp/ichibams/api)に移行済み。
+完全停止し、新エンドポイント(openapi.rakuten.co.jp)に移行済み。
 新APIでは以下がすべて必須:
 - applicationId(クエリパラメータ、従来通り)
-- accessKey(ヘッダー。新APIからの追加要件)
+- accessKey(ヘッダーまたはクエリパラメータ。新APIからの追加要件)
 - Origin / Referer ヘッダー(値は「許可Webサイト(Allowed websites)」に登録した
   文字列と完全一致させること。実在するサイトである必要はなく、登録時と送信時で
   一致してさえいればよい。本プロジェクトでは RAKUTEN_ALLOWED_SITE で管理する)
+
+【重要】RankingとSearchでベースパスが異なる。
+- Ranking: https://openapi.rakuten.co.jp/ichibaranking/api/...
+- Search : https://openapi.rakuten.co.jp/ichibams/api/...
+同一のRAKUTEN_API_BASEでまとめると404になるため、別々の定数として持つ。
 
 主に以下の2つのAPIを利用する:
 - IchibaItem/Ranking: ジャンル別の売れ筋ランキング取得
@@ -27,9 +32,8 @@ from typing import Optional
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-RAKUTEN_API_BASE = "https://openapi.rakuten.co.jp/ichibams/api"
-RAKUTEN_RANKING_ENDPOINT = f"{RAKUTEN_API_BASE}/IchibaItem/Ranking/20220601"
-RAKUTEN_SEARCH_ENDPOINT = f"{RAKUTEN_API_BASE}/IchibaItem/Search/20220601"
+RAKUTEN_RANKING_ENDPOINT = "https://openapi.rakuten.co.jp/ichibaranking/api/IchibaItem/Ranking/20220601"
+RAKUTEN_SEARCH_ENDPOINT = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20220601"
 
 
 @dataclass

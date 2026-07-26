@@ -13,6 +13,10 @@
             投稿後、link_checker.py で機械的に一致確認する対象。
 - 表現部分: キャッチコピー、ランキング内での立ち位置の解説など。AIが自由に生成してよい。
             ここは機械チェックの対象外(=多様な自然な文章になる)。
+
+【2026-07 修正】非推奨の google.generativeai パッケージは、Google AI Studioが
+新規発行する "AQ." 形式のAuthキーに対応していないため、現行の google-genai
+パッケージ(Interactions API)に移行済み。
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-import google.generativeai as genai
+from google import genai
 import yaml
 
 from src.rakuten_client import RakutenItem
@@ -41,8 +45,7 @@ def _load_config() -> dict:
 
 def _generate_catch_copy(item: RakutenItem, track: str) -> str:
     """Gemini APIで、事実を歪めない範囲のキャッチコピー(表現部分)だけを生成させる。"""
-    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
     if track == "timesale":
         instruction = "今だけのお得情報として、短く勢いのあるキャッチコピーを1文で。"
@@ -56,8 +59,8 @@ def _generate_catch_copy(item: RakutenItem, track: str) -> str:
         f"商品ジャンル: {item.genre_id or '不明'}\n"
         f"参考情報(店舗名): {item.shop_name}"
     )
-    response = model.generate_content(prompt)
-    return response.text.strip()
+    interaction = client.interactions.create(model="gemini-3.6-flash", input=prompt)
+    return interaction.output_text.strip()
 
 
 def compose(item: RakutenItem, track: str) -> ComposedPost:

@@ -17,6 +17,9 @@
 【2026-07 修正】非推奨の google.generativeai パッケージは、Google AI Studioが
 新規発行する "AQ." 形式のAuthキーに対応していないため、現行の google-genai
 パッケージ(Interactions API)に移行済み。
+
+【2026-07 追記】単純な一言キャッチコピー生成にthinkingは不要かつコスト増の原因になるため、
+thinking_level="low"を指定してコストを抑える。
 """
 
 from __future__ import annotations
@@ -59,7 +62,11 @@ def _generate_catch_copy(item: RakutenItem, track: str) -> str:
         f"商品ジャンル: {item.genre_id or '不明'}\n"
         f"参考情報(店舗名): {item.shop_name}"
     )
-    interaction = client.interactions.create(model="gemini-3.6-flash", input=prompt)
+    interaction = client.interactions.create(
+        model="gemini-3.6-flash",
+        input=prompt,
+        generation_config={"thinking_level": "low"},
+    )
     return interaction.output_text.strip()
 
 

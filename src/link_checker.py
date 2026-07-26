@@ -9,6 +9,10 @@
 2. 販売終了・品切れワードの検出
 3. 投稿文中の商品名・価格が、APIから取得した実データと文字列レベルで一致するか
 4. アフィリエイトIDがURL内に正しい形式で含まれているか
+
+【2026-07 修正】item.rakuten.co.jpへの疎通確認リクエストにUser-Agentがないと
+Bot判定され応答が極端に遅くなり(timeout=10で全滅)、投稿対象が0件になっていた。
+ブラウザ相当のUser-Agentを付与し、timeoutも15秒に緩和する。
 """
 
 from __future__ import annotations
@@ -21,6 +25,14 @@ import requests
 
 SOLD_OUT_KEYWORDS = ["販売終了", "品切れ", "売り切れ", "ページが見つかりません", "在庫なし"]
 
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+}
+
 
 @dataclass
 class CheckResult:
@@ -28,9 +40,9 @@ class CheckResult:
     reason: str = ""
 
 
-def check_link_reachable(url: str, timeout: int = 10) -> CheckResult:
+def check_link_reachable(url: str, timeout: int = 15) -> CheckResult:
     try:
-        resp = requests.get(url, timeout=timeout, allow_redirects=True)
+        resp = requests.get(url, timeout=timeout, allow_redirects=True, headers=_BROWSER_HEADERS)
     except requests.RequestException as exc:
         return CheckResult(passed=False, reason=f"接続エラー: {exc}")
 

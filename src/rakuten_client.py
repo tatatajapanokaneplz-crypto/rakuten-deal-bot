@@ -15,6 +15,9 @@
 - Search : https://openapi.rakuten.co.jp/ichibams/api/...
 同一のRAKUTEN_API_BASEでまとめると404になるため、別々の定数として持つ。
 
+【2026-07 修正】楽天APIはitemPriceを文字列で返すケースがあるため、
+post_composer側でのフォーマット(カンマ区切り)エラーを防ぐためint変換を明示する。
+
 主に以下の2つのAPIを利用する:
 - IchibaItem/Ranking: ジャンル別の売れ筋ランキング取得
 - IchibaItem/Search: キーワード・ジャンル指定での商品検索(タイムセール・クーポン対象商品の取得)
@@ -106,7 +109,7 @@ class RakutenClient:
         return RakutenItem(
             item_name=item["itemName"],
             item_code=item["itemCode"],
-            item_price=item["itemPrice"],
+            item_price=int(item["itemPrice"]),
             item_url=item["affiliateUrl"] or item["itemUrl"],
             shop_name=item["shopName"],
             review_average=float(item.get("reviewAverage", 0) or 0),

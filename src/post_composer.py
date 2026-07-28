@@ -35,6 +35,19 @@ thinking_level="low"を指定してコストを抑える。
   明記する運用に変更(エンゲージメント低下を避けるため)
 - 【PR】は本文冒頭ではなく、返信文末尾の#PRハッシュタグとして表示する
 
+【2026-07 バグ修正】healthchecks.io の "ranking" チェックが
+"Cannot send a request, as the client has been closed." で失敗する障害が発生。
+原因: 旧コードでは _client() を呼ぶたびに genai.Client(...) を「その場限りの
+一時オブジェクト」として生成し、生成した式に直接 .interactions.create(...) を
+チェーンしていた(例: _client().interactions.create(...))。
+google-genai は 1.39.0 以降、Clientを変数に保持せず一時オブジェクトとして
+使うと、内部のhttpxクライアントが早期にclose()されてしまう既知の不具合がある
+(参考: https://github.com/googleapis/python-genai/issues/1763 ,
+       https://github.com/googleapis/python-genai/issues/1489)。
+本ファイルでは対策として、genai.Client をモジュール内でシングルトンとして
+1回だけ生成しキャッシュし、生成関数側でも一度変数に代入してから使うように
+修正した(temporary objectとして扱わない)。
+
 事実の正確性担保について:
 - 本文(煽り)には具体的な事実(価格・商品名)を一切含めないため、AIが自由に書いても
   誤情報のリスクがない
@@ -67,6 +80,11 @@ _PERSONA_SYSTEM_INSTRUCTION = (
     "誇大な効果効能の断定表現や、過度に煽る表現は避けてください。"
 )
 
+# 【バグ修正】genai.Clientをプロセス内でシングルトンとして使い回す。
+# 呼び出しのたびに新規Clientを作って即座にメソッドチェーンする(一時オブジェクトとして
+# 使う)と、google-genai 1.39.0以降で内部httpxクライアントが早期closeされる不具合がある。
+_genai_client: genai.Client | None = None
+
 
 @dataclass
 class ComposedPost:
@@ -90,7 +108,11 @@ def _load_config() -> dict:
 
 
 def _client() -> genai.Client:
-    return genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    """genai.Clientをプロセス内で1つだけ生成し、以降は使い回す。"""
+    global _genai_client
+    if _genai_client is None:
+        _genai_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    return _genai_client
 
 
 def _generate_teaser(item: RakutenItem, track: str) -> str:
@@ -108,7 +130,9 @@ def _generate_teaser(item: RakutenItem, track: str) -> str:
         f"絵文字は控えめに。\n"
         f"商品ジャンル: {item.genre_id or '不明'}"
     )
-    interaction = _client().interactions.create(
+    # genai.Clientを一時オブジェクトとして使わず、いったん変数に代入してから使う。
+    client = _client()
+    interaction = client.interactions.create(
         model="gemini-3.6-flash",
         system_instruction=_PERSONA_SYSTEM_INSTRUCTION,
         input=prompt,
@@ -132,7 +156,9 @@ def _generate_reply_hook(item: RakutenItem) -> str:
         f"「ｗｗｗ」のような軽いノリは使ってよいですが、誇張しすぎた煽り表現は避けてください。\n"
         f"商品名やURLはこの文には含めないでください(別途付記します)。"
     )
-    interaction = _client().interactions.create(
+    # genai.Clientを一時オブジェクトとして使わず、いったん変数に代入してから使う。
+    client = _client()
+    interaction = client.interactions.create(
         model="gemini-3.6-flash",
         system_instruction=_PERSONA_SYSTEM_INSTRUCTION,
         input=prompt,

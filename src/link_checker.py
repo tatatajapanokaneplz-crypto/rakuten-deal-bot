@@ -73,11 +73,18 @@ def check_fact_consistency(post_text: str, item_name: str, item_price: int) -> C
 
 
 def check_affiliate_id_present(url: str, affiliate_id: str) -> CheckResult:
-    """アフィリエイトIDがURLに正しい形式で含まれているかを文字列検証する。"""
+    """URLが楽天アフィリエイトの正規トラッキングリンク(hb.afl.rakuten.co.jp)かどうかを確認する。
+
+    【2026-07 修正】以前は生のaffiliate_id文字列がURLにそのまま含まれるかを見ていたが、
+    実際の楽天アフィリエイトURLはハッシュ化されたトラッキングコードに変換されるため
+    (例: https://hb.afl.rakuten.co.jp/hgc/xxxxx.../?pc=...)、
+    affiliate_id自体の文字列はURLに一切現れない。そのため常に不一致になり、
+    正当な報酬付きリンクまでほぼ全件「無報酬リンク」と誤判定していたバグを修正する。
+    """
     if not affiliate_id:
         return CheckResult(passed=False, reason="affiliate_idが設定されていません")
-    if affiliate_id not in url:
-        return CheckResult(passed=False, reason="URLにアフィリエイトIDが含まれていません(無報酬リンクの疑い)")
+    if "hb.afl.rakuten.co.jp" not in url:
+        return CheckResult(passed=False, reason="楽天アフィリエイトのトラッキングリンク形式ではありません(無報酬リンクの疑い)")
     return CheckResult(passed=True)
 
 

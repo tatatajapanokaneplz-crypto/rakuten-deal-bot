@@ -3,6 +3,10 @@
 
 config/filters.yaml のフィルタ条件(レビュー数・評価スコア・除外ジャンル)を適用する。
 速報トラックと違い、鮮度より品質担保を優先する。
+
+【2026-07 変更】投稿はスレッド形式(本文+返信)。BUFFER_CHANNEL_ID_X は
+twitter、BUFFER_CHANNEL_ID_THREADS は threads として Buffer に渡す
+(createPostのmetadataキーがサービスごとに異なるため)。
 """
 
 from __future__ import annotations
@@ -19,6 +23,12 @@ from src.buffer_client import BufferClient
 from src.rakuten_client import RakutenClient
 
 _CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "filters.yaml")
+
+# env変数名 -> BufferのcreatePost.metadataキー(サービス名)の対応
+CHANNEL_SERVICE_MAP = {
+    "BUFFER_CHANNEL_ID_X": "twitter",
+    "BUFFER_CHANNEL_ID_THREADS": "threads",
+}
 
 
 def _load_filters() -> dict:
@@ -55,20 +65,22 @@ def main(dry_run: bool = False) -> int:
 
             composed = post_composer.compose(item, track="ranking")
             check = link_checker.run_all_checks(
-                post_text=composed.text,
+                main_text=composed.main_text,
+                reply_text=composed.reply_text,
                 item_url=item.item_url,
-                item_name=item.item_name,
                 item_price=item.item_price,
             )
             if not check.passed:
                 print(f"[SKIP] {item.item_name}: {check.reason}")
                 continue
 
-            for channel_env in ("BUFFER_CHANNEL_ID_X", "BUFFER_CHANNEL_ID_THREADS"):
+            for channel_env, service in CHANNEL_SERVICE_MAP.items():
                 channel_id = os.environ.get(channel_env, "")
                 if not channel_id:
                     continue
-                result = buffer.create_post(channel_id, composed.text, dry_run=dry_run)
+                result = buffer.create_post(
+                    channel_id, service, composed.texts, dry_run=dry_run
+                )
                 if not result.success:
                     print(f"[ERROR] 投稿失敗 channel={channel_id}: {result.error}")
 

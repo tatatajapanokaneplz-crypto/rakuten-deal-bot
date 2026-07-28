@@ -9,22 +9,39 @@
 - 型番違い・旧モデル混同などのハルシネーションが混入するリスクがある
 
 そのため、投稿文を以下の2つに明確に分離する:
-- 事実部分: 商品名・価格・リンク。AIには生成させず、Rakutenのデータをそのまま使う。
-            投稿後、link_checker.py で機械的に一致確認する対象。
-- 表現部分: キャッチコピー、ランキング内での立ち位置の解説など。AIが自由に生成してよい。
-            ここは機械チェックの対象外(=多様な自然な文章になる)。
+- 事実部分: 価格。AIには自由生成させず、実データをプロンプトに明示して「そのまま使う」
+            よう指示し、投稿後 link_checker.py で機械的に一致確認する対象とする。
+- 表現部分: 煽り文・リアクション文。AIが自由に生成してよい。
 
 【2026-07 修正】非推奨の google.generativeai パッケージは、Google AI Studioが
 新規発行する "AQ." 形式のAuthキーに対応していないため、現行の google-genai
 パッケージ(Interactions API)に移行済み。
 
-【2026-07 追記】単純な一言キャッチコピー生成にthinkingは不要かつコスト増の原因になるため、
+【2026-07 追記】単純な短文生成にthinkingは不要かつコスト増の原因になるため、
 thinking_level="low"を指定してコストを抑える。
 
 【2026-07 追記】アカウントのペルソナ(system_instruction)を追加。
 見た目はおじいちゃん(グランパ)だが、中身は心が20代でトレンドやガジェットを
 自分ごととして楽しんでいる、というギャップキャラクター設定。
 「若い子の間で」のように若者を外側から語る表現は禁止し、当事者目線で書かせる。
+
+【2026-07 大幅変更】投稿フォーマットを「本文(煽り)+返信(フック+リンク)」の
+2段構成(スレッド)に変更した。理由:
+- Xのアルゴリズムは本文に外部リンクを含む投稿の表示を抑制する傾向があるため、
+  リンクは返信側に置き、本文には含めない
+- リンクを踏めばOGP(リンクカード)で商品名・画像が自動表示されるため、
+  本文・返信文中に商品名を重複して書く必要がない(むしろ冗長)
+- 「※このアカウントは自動投稿botです」は本文から削除し、プロフィール欄側で
+  明記する運用に変更(エンゲージメント低下を避けるため)
+- 【PR】は本文冒頭ではなく、返信文末尾の#PRハッシュタグとして表示する
+
+事実の正確性担保について:
+- 本文(煽り)には具体的な事実(価格・商品名)を一切含めないため、AIが自由に書いても
+  誤情報のリスクがない
+- 返信文には価格に軽く触れさせるが、価格の数字自体はAIに自由発想させず、
+  実データをプロンプトに明示して「その数字をそのまま使うこと」を指示し、
+  link_checker.py側で生成された返信文に実際の価格文字列が含まれているかを
+  機械チェックする(hallucinationで違う金額を書いてしまうリスクを防ぐ)
 """
 
 from __future__ import annotations
@@ -53,8 +70,18 @@ _PERSONA_SYSTEM_INSTRUCTION = (
 
 @dataclass
 class ComposedPost:
-    text: str
+    """投稿するスレッドの各パート。texts[0]が本文、texts[1]が返信。"""
+
+    texts: list[str]
     item: RakutenItem
+
+    @property
+    def main_text(self) -> str:
+        return self.texts[0]
+
+    @property
+    def reply_text(self) -> str:
+        return self.texts[1]
 
 
 def _load_config() -> dict:
@@ -62,23 +89,50 @@ def _load_config() -> dict:
         return yaml.safe_load(f)
 
 
-def _generate_catch_copy(item: RakutenItem, track: str) -> str:
-    """Gemini APIで、事実を歪めない範囲のキャッチコピー(表現部分)だけを生成させる。"""
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+def _client() -> genai.Client:
+    return genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
+
+def _generate_teaser(item: RakutenItem, track: str) -> str:
+    """本文用: 事実(商品名・価格)には一切触れず、続きが気になる煽り文を生成する。"""
     if track == "timesale":
-        instruction = "今だけのお得情報として、短く勢いのあるキャッチコピーを1文で。"
+        instruction = "今だけのお得情報を見つけて、思わず買ってしまった、という体で書いてください。"
     else:
-        instruction = "人気ランキング入りしている理由が伝わるような、短い一言コメントを1文で。"
+        instruction = "人気ランキングでたまたま見つけて、気になっている、という体で書いてください。"
 
     prompt = (
         f"{instruction}\n"
-        f"商品名や価格などの具体的な事実は、この文には含めないでください(別途固定で付記されます)。\n"
-        f"絵文字は控えめに、誇大な効能・効果の表現は避けてください。\n"
-        f"商品ジャンル: {item.genre_id or '不明'}\n"
-        f"参考情報(店舗名): {item.shop_name}"
+        f"具体的な商品名・価格・数量などの事実は一切書かないでください"
+        f"(この文では伏せておいて、続きが気になるように仕向けるのが目的です)。\n"
+        f"「これ買ったんじゃが、お得すぎてのぉ…」のような、続きを匂わせる1〜2文にしてください。\n"
+        f"絵文字は控えめに。\n"
+        f"商品ジャンル: {item.genre_id or '不明'}"
     )
-    interaction = client.interactions.create(
+    interaction = _client().interactions.create(
+        model="gemini-3.6-flash",
+        system_instruction=_PERSONA_SYSTEM_INSTRUCTION,
+        input=prompt,
+        generation_config={"thinking_level": "low"},
+    )
+    return interaction.output_text.strip()
+
+
+def _generate_reply_hook(item: RakutenItem) -> str:
+    """返信用: 実際の価格に軽く触れつつ、テンション高めの一言リアクションを生成する。
+
+    価格は実データをそのまま使うようプロンプトで明示指示し、link_checker.py側で
+    生成結果に実際の価格文字列が含まれているかを機械チェックする。
+    """
+    price_str = f"{item.item_price:,}円"
+    prompt = (
+        f"さっき話題に出した商品の値段にテンション高めでリアクションする、短い一言(1文)を"
+        f"書いてください。\n"
+        f"実際の価格は「{price_str}」です。この価格を必ずそのまま(数字も含めて)文中に"
+        f"入れてください。\n"
+        f"「ｗｗｗ」のような軽いノリは使ってよいですが、誇張しすぎた煽り表現は避けてください。\n"
+        f"商品名やURLはこの文には含めないでください(別途付記します)。"
+    )
+    interaction = _client().interactions.create(
         model="gemini-3.6-flash",
         system_instruction=_PERSONA_SYSTEM_INSTRUCTION,
         input=prompt,
@@ -91,26 +145,20 @@ def compose(item: RakutenItem, track: str) -> ComposedPost:
     """
     track: "timesale" または "ranking"
 
-    投稿文の構造:
-    【PR】<キャッチコピー(AI生成・表現部分)>
+    投稿はスレッド形式(本文+返信)で構成する:
+    本文: 事実を伏せた煽り文(AI生成)。商品名・価格・リンクは含まない。
+    返信: 価格に軽く触れるリアクション文(AI生成、価格は実データ埋め込み)
+          + URL(アフィリエイトID込み) + #PR
 
-    <商品名(事実・固定)>
-    <価格(事実・固定)>円
-    <URL(事実・固定、アフィリエイトID込み)>
-
-    ※このアカウントは自動投稿botです
+    ※bot表記(「このアカウントは自動投稿botです」)は本文には含めない。
+      アカウントのプロフィール欄側で明記する運用とする(config/filters.yaml参照)。
     """
     config = _load_config()
     pr_label = config["post_composer"]["fixed_pr_label"]
-    bot_disclosure = config["post_composer"]["bot_disclosure"]
 
-    catch_copy = _generate_catch_copy(item, track)
+    main_text = _generate_teaser(item, track)
+    reaction = _generate_reply_hook(item)
 
-    text = (
-        f"{pr_label} {catch_copy}\n\n"
-        f"{item.item_name}\n"
-        f"{item.item_price:,}円\n"
-        f"{item.item_url}\n\n"
-        f"{bot_disclosure}"
-    )
-    return ComposedPost(text=text, item=item)
+    reply_text = f"{reaction}\n\n{item.item_url}\n\n{pr_label}"
+
+    return ComposedPost(texts=[main_text, reply_text], item=item)

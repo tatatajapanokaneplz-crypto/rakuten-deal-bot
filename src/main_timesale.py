@@ -2,7 +2,11 @@
 速報トラック: タイムセール・クーポン速報。
 
 フィルタは適用しない(鮮度優先という前提。README/config/filters.yaml 参照)。
-ただし投稿直前チェック(リンク疎通・事実一致・アフィリエイトID確認)は必須。
+ただし投稿直前チェック(リンク疎通・価格一致・アフィリエイトID確認)は必須。
+
+【2026-07 変更】投稿はスレッド形式(本文+返信)。BUFFER_CHANNEL_ID_X は
+twitter、BUFFER_CHANNEL_ID_THREADS は threads として Buffer に渡す
+(createPostのmetadataキーがサービスごとに異なるため)。
 """
 
 from __future__ import annotations
@@ -20,6 +24,12 @@ from src.rakuten_client import RakutenClient
 # 速報対象として検索するキーワード。実運用では複数キーワードをローテーションする想定。
 SEARCH_KEYWORDS = ["タイムセール", "クーポン", "お買い物マラソン"]
 
+# env変数名 -> BufferのcreatePost.metadataキー(サービス名)の対応
+CHANNEL_SERVICE_MAP = {
+    "BUFFER_CHANNEL_ID_X": "twitter",
+    "BUFFER_CHANNEL_ID_THREADS": "threads",
+}
+
 
 def main(dry_run: bool = False) -> int:
     load_dotenv()
@@ -36,20 +46,22 @@ def main(dry_run: bool = False) -> int:
             for item in items:
                 composed = post_composer.compose(item, track="timesale")
                 check = link_checker.run_all_checks(
-                    post_text=composed.text,
+                    main_text=composed.main_text,
+                    reply_text=composed.reply_text,
                     item_url=item.item_url,
-                    item_name=item.item_name,
                     item_price=item.item_price,
                 )
                 if not check.passed:
                     print(f"[SKIP] {item.item_name}: {check.reason}")
                     continue
 
-                for channel_env in ("BUFFER_CHANNEL_ID_X", "BUFFER_CHANNEL_ID_THREADS"):
+                for channel_env, service in CHANNEL_SERVICE_MAP.items():
                     channel_id = os.environ.get(channel_env, "")
                     if not channel_id:
                         continue
-                    result = buffer.create_post(channel_id, composed.text, dry_run=dry_run)
+                    result = buffer.create_post(
+                        channel_id, service, composed.texts, dry_run=dry_run
+                    )
                     if not result.success:
                         print(f"[ERROR] 投稿失敗 channel={channel_id}: {result.error}")
 

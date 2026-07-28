@@ -23,6 +23,13 @@ Buffer API(https://developers.buffer.com/)のラッパー。
 
 レート制限(Freeプラン, 2026-07時点): 15分100件 / 24時間100件 / 30日3,000件。
 本プロジェクトの想定投稿量(1日10件程度)なら十分に余裕がある。
+
+【2026-07 追記】投稿フォーマットをスレッド形式(本文+返信)に変更したことに伴い、
+create_post はスレッドの各テキストをリストで受け取るようにした。
+Xのアルゴリズムが本文の外部リンクを抑制する傾向があるため、リンクは返信側に
+含める設計(post_composer.py参照)。スレッドは createPost の metadata に
+サービス別(twitter/threads/bluesky/mastodon)の thread 配列を渡すことで作成する。
+1件だけ渡した場合は通常の単独投稿として扱う。
 """
 
 from __future__ import annotations
@@ -45,6 +52,11 @@ class PostResult:
     error: Optional[str] = None
 
 
+def _escape(text: str) -> str:
+    """GraphQLのstringリテラルに埋め込むための最低限のエスケープ。"""
+    return text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
 class BufferClient:
     def __init__(self, access_token: Optional[str] = None):
         self.access_token = access_token or os.environ["BUFFER_ACCESS_TOKEN"]
@@ -62,25 +74,56 @@ class BufferClient:
         resp.raise_for_status()
         return resp.json()
 
-    def create_post(self, channel_id: str, text: str, dry_run: bool = False) -> PostResult:
+    def create_post(
+        self,
+        channel_id: str,
+        service: str,
+        texts: list[str],
+        dry_run: bool = False,
+    ) -> PostResult:
         """
         指定チャンネルに即時投稿(mode: shareNow)を作成する。
+
+        texts: スレッドの各パートの本文リスト。texts[0]が本文、texts[1]以降が
+               その本文への返信として順番に投稿される。1件だけなら通常の単独投稿になる。
+        service: Buffer側のmetadataキーに対応するサービス名("twitter" または "threads")。
 
         dry_run=True の場合、実際のAPI呼び出しは行わず、内容を検証するだけに留める。
         まず --dry-run で投稿内容を目視確認してから実運用に移すこと。
         """
         if dry_run:
-            print(f"[DRY RUN] channel={channel_id}\n--- 投稿内容 ---\n{text}\n----------------")
+            preview = "\n--- (返信) ---\n".join(texts)
+            print(
+                f"[DRY RUN] channel={channel_id} service={service}\n"
+                f"--- 投稿内容 ---\n{preview}\n----------------"
+            )
             return PostResult(success=True, channel_id=channel_id, post_id="dry-run")
 
-        escaped_text = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+        main_text = texts[0]
+        escaped_main = _escape(main_text)
+
+        if len(texts) <= 1:
+            metadata_block = ""
+        else:
+            thread_entries = ",\n                ".join(
+                f'{{ text: "{_escape(t)}" }}' for t in texts
+            )
+            metadata_block = f"""
+            metadata: {{
+              {service}: {{
+                thread: [
+                  {thread_entries}
+                ]
+              }}
+            }}"""
+
         query = f"""
         mutation CreatePost {{
           createPost(input: {{
-            text: "{escaped_text}",
+            text: "{escaped_main}",
             channelId: "{channel_id}",
             schedulingType: automatic,
-            mode: shareNow
+            mode: shareNow{"," if metadata_block else ""}{metadata_block}
           }}) {{
             ... on PostActionSuccess {{
               post {{

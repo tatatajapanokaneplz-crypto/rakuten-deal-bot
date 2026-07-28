@@ -7,18 +7,30 @@
 チェック項目:
 1. リンクの疎通確認(ステータスコードが200番台か)
 2. 販売終了・品切れワードの検出
-3. 投稿文中の商品名・価格が、APIから取得した実データと文字列レベルで一致するか
+3. 返信文中の価格が、APIから取得した実データと文字列レベルで一致するか
 4. アフィリエイトIDがURL内に正しい形式で含まれているか
 
 【2026-07 修正】item.rakuten.co.jpへの疎通確認リクエストにUser-Agentがないと
 Bot判定され応答が極端に遅くなり(timeout=10で全滅)、投稿対象が0件になっていた。
 ブラウザ相当のUser-Agentを付与し、timeoutも15秒に緩和する。
+
+【2026-07 修正】生のaffiliate_id文字列がURLにそのまま含まれるかを見ていたが、
+実際の楽天アフィリエイトURLはハッシュ化されたトラッキングコードに変換されるため
+(例: https://hb.afl.rakuten.co.jp/hgc/xxxxx.../?pc=...)、affiliate_id自体の
+文字列はURLに一切現れない。そのため常に不一致になり、正当な報酬付きリンクまで
+ほぼ全件「無報酬リンク」と誤判定していたバグを修正し、hb.afl.rakuten.co.jp
+ドメインを使っているかどうかで判定するように変更した。
+
+【2026-07 大幅変更】投稿フォーマットを「本文(煽り)+返信(フック+リンク)」の
+2段構成に変更したことに伴い、事実確認の対象を変更した。
+- 商品名は本文・返信文どちらにも書かない設計(リンクプレビューに任せる)ため、
+  商品名の一致チェック(旧 check_fact_consistency / _extract_core_name)は廃止。
+- 価格チェックの対象を本文(post_text)から返信文(reply_text)に変更。
 """
 
 from __future__ import annotations
 
 import os
-import re
 from dataclasses import dataclass
 
 import requests
@@ -57,30 +69,16 @@ def check_link_reachable(url: str, timeout: int = 15) -> CheckResult:
     return CheckResult(passed=True)
 
 
-def check_fact_consistency(post_text: str, item_name: str, item_price: int) -> CheckResult:
-    """投稿文中の商品名・価格が、実データと一致するか確認する(表現部分は対象外)。"""
-    # 商品名は完全一致ではなく、実データの主要な部分文字列が含まれているかで判定
-    # (AIが多少言い回しを変えても、固有名詞部分は保持される前提)
-    name_core = _extract_core_name(item_name)
-    if name_core not in post_text:
-        return CheckResult(passed=False, reason=f"商品名の不一致: 期待='{name_core}'")
-
+def check_price_consistency(reply_text: str, item_price: int) -> CheckResult:
+    """返信文中に実際の価格が正しく含まれているか確認する(表現部分中の事実齟齬を防ぐ)。"""
     price_str = f"{item_price:,}"
-    if price_str not in post_text and str(item_price) not in post_text:
-        return CheckResult(passed=False, reason=f"価格の不一致: 期待='{price_str}円'")
-
+    if price_str not in reply_text and str(item_price) not in reply_text:
+        return CheckResult(passed=False, reason=f"返信文に価格が含まれていません: 期待='{price_str}円'")
     return CheckResult(passed=True)
 
 
 def check_affiliate_id_present(url: str, affiliate_id: str) -> CheckResult:
-    """URLが楽天アフィリエイトの正規トラッキングリンク(hb.afl.rakuten.co.jp)かどうかを確認する。
-
-    【2026-07 修正】以前は生のaffiliate_id文字列がURLにそのまま含まれるかを見ていたが、
-    実際の楽天アフィリエイトURLはハッシュ化されたトラッキングコードに変換されるため
-    (例: https://hb.afl.rakuten.co.jp/hgc/xxxxx.../?pc=...)、
-    affiliate_id自体の文字列はURLに一切現れない。そのため常に不一致になり、
-    正当な報酬付きリンクまでほぼ全件「無報酬リンク」と誤判定していたバグを修正する。
-    """
+    """URLが楽天アフィリエイトの正規トラッキングリンク(hb.afl.rakuten.co.jp)かどうかを確認する。"""
     if not affiliate_id:
         return CheckResult(passed=False, reason="affiliate_idが設定されていません")
     if "hb.afl.rakuten.co.jp" not in url:
@@ -88,19 +86,17 @@ def check_affiliate_id_present(url: str, affiliate_id: str) -> CheckResult:
     return CheckResult(passed=True)
 
 
-def _extract_core_name(item_name: str, max_len: int = 20) -> str:
-    """商品名の先頭部分(固有名詞が集中しやすい)を抽出する簡易ロジック。"""
-    cleaned = re.sub(r"^[\[【].*?[\]】]\s*", "", item_name)  # 先頭の装飾タグのみ除去(途中の【】は残す)
-    return cleaned.strip()[:max_len]
+def run_all_checks(main_text: str, reply_text: str, item_url: str, item_price: int) -> CheckResult:
+    """全チェックを実行し、いずれかが失敗したら理由付きで失敗を返す。
 
-
-def run_all_checks(post_text: str, item_url: str, item_name: str, item_price: int) -> CheckResult:
-    """全チェックを実行し、いずれかが失敗したら理由付きで失敗を返す。"""
+    main_text は現状チェック対象にしていない(事実を含まない煽り文のため)が、
+    将来的にNGワード検出等を行う場合に備えて引数として受け取っておく。
+    """
     affiliate_id = os.environ.get("RAKUTEN_AFFILIATE_ID", "")
 
     checks = [
         check_link_reachable(item_url),
-        check_fact_consistency(post_text, item_name, item_price),
+        check_price_consistency(reply_text, item_price),
         check_affiliate_id_present(item_url, affiliate_id),
     ]
     for result in checks:

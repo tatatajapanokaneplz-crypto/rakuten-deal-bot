@@ -40,18 +40,24 @@ thinking_level="low"を指定してコストを抑える。
 genai.Clientを一時オブジェクトとしてチェーン呼び出ししていたのが原因だったため、
 プロセス内シングルトンとしてキャッシュするよう修正済み。
 
-【2026-07 修正(本文が長すぎ・完結気味だった問題)】理由の説明(デザインが〜、
-機能が〜等)を本文に書かせないよう指示を強化し、文字数上限も明示した。
+【2026-07 修正(本文の単調さ)】本文の切り方が「これが、」等に偏っていた問題を
+修正し、切り口の語感の例を15パターンに拡充した。
 
-【2026-07 修正(単調さの問題)】切り方が「これが、」「それが、」ばかりに偏る
-問題があり、固定パターンをやめて自由記述に変更した上で、切り口の語感の例を
-15パターンに拡充した(驚き・限定・逆接・前置き・伏線・自問・呼びかけ等、
-カテゴリを分散させることで、AIが同じ言い回しを繰り返しにくくしている)。
+【2026-07 修正(返信の単調さ + 読点の重複)】実際の出力を確認したところ、
+返信のリアクション文が3件とも「ｗｗｗ」で終わっており、これも本文と同様の
+単調化が起きていた。そのため、語尾の例を30パターンに拡充し、「ｗｗｗ」に
+偏らないよう指示した。
+また、本文生成の結果に「見つけてな、、」のように読点が連続してしまうケースが
+あったため、main_text・reaction双方に対して連続する読点(、)・句点(。)を
+1つに整形する後処理(_collapse_repeated_punctuation)を追加した。
+※「ｗｗｗ」「…」のような意図的な繰り返し表現はこの整形の対象外とする
+(笑いの強弱や余韻を表す正当な表現のため、崩さないようにしている)。
 """
 
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 from google import genai
@@ -96,6 +102,50 @@ _TEASER_HOOK_EXAMPLES = [
     "実際のところ、",
 ]
 
+# 返信リアクションの語尾ヒント(30パターン)。「ｗｗｗ」だけに偏らないための例。
+_REACTION_ENDING_EXAMPLES = [
+    "ｗｗｗ",
+    "…",
+    "じゃろ!",
+    "たまらんのう",
+    "にやけが止まらんわ",
+    "まいったのう",
+    "しびれたわい",
+    "ゾクゾクしたぞ",
+    "これは反則じゃろ",
+    "惚れてもうたわ",
+    "たまげたのう",
+    "これはやられたわ",
+    "にんまりしてもうた",
+    "最高すぎるじゃろ",
+    "わしの負けじゃ",
+    "こりゃたまらんて",
+    "くせになりそうじゃ",
+    "なんじゃこりゃ",
+    "一目惚れしたわい",
+    "こんなのアリかよ",
+    "トキメキが止まらん",
+    "これは反則級じゃ",
+    "わしゃ興奮しっぱなしじゃ",
+    "たまらん気持ちになったわい",
+    "これは事件じゃろ",
+    "わしの心つかまれたわ",
+    "しばらく興奮冷めやらんかったわ",
+    "こりゃ参ったのう",
+    "一気にテンション上がったわい",
+    "こんなん惚れてまうやろ",
+]
+
+
+def _collapse_repeated_punctuation(text: str) -> str:
+    """連続する読点・句点を1つに整形する(「見つけてな、、」→「見つけてな、」)。
+
+    「ｗｗｗ」「…」のような意図的な繰り返し表現は対象外(崩さない)。
+    """
+    text = re.sub(r"、{2,}", "、", text)
+    text = re.sub(r"。{2,}", "。", text)
+    return text
+
 
 @dataclass
 class ComposedPost:
@@ -127,12 +177,7 @@ def _client() -> genai.Client:
 
 
 def _generate_teaser(item: RakutenItem, track: str) -> str:
-    """本文用: 事実にもオチにも触れず、"できるだけ早く"切り上げる煽り文を生成する。
-
-    重要: 理由の説明(デザインが〜、機能が〜等)を一切書かないこと。
-    切り方(「これが、」等)を固定パターン化せず、その都度いちばん自然な
-    形を自由に考えさせる。
-    """
+    """本文用: 事実にもオチにも触れず、"できるだけ早く"切り上げる煽り文を生成する。"""
     if track == "timesale":
         situation = "ランキングやセールを眺めていたら気になる商品を見つけて、つい買ってしまった"
     else:
@@ -166,7 +211,7 @@ def _generate_teaser(item: RakutenItem, track: str) -> str:
         input=prompt,
         generation_config={"thinking_level": "low"},
     )
-    return interaction.output_text.strip()
+    return _collapse_repeated_punctuation(interaction.output_text.strip())
 
 
 def _generate_reply_hook(item: RakutenItem) -> str:
@@ -174,14 +219,20 @@ def _generate_reply_hook(item: RakutenItem) -> str:
 
     価格は実データをそのまま使うようプロンプトで明示指示し、link_checker.py側で
     生成結果に実際の価格文字列が含まれているかを機械チェックする。
+    語尾が「ｗｗｗ」に偏らないよう、30パターンの例をヒントとして与える。
     """
     price_str = f"{item.item_price:,}円"
+    ending_list = "、".join(_REACTION_ENDING_EXAMPLES)
+
     prompt = (
         f"さっき話題に出した商品の値段にテンション高めでリアクションする、短い一言(1文)を"
         f"書いてください。\n"
         f"実際の価格は「{price_str}」です。この価格を必ずそのまま(数字も含めて)文中に"
         f"入れてください。\n"
-        f"「ｗｗｗ」のような軽いノリは使ってよいですが、誇張しすぎた煽り表現は避けてください。\n"
+        f"文末を「ｗｗｗ」に固定しないこと。以下は語尾の例であり、これに限らず"
+        f"自由に考えてよい(同じ語尾の繰り返しは避けること):\n"
+        f"{ending_list}\n\n"
+        f"誇張しすぎた煽り表現は避けてください。\n"
         f"商品名やURLはこの文には含めないでください(別途付記します)。"
     )
     client = _client()
@@ -191,7 +242,7 @@ def _generate_reply_hook(item: RakutenItem) -> str:
         input=prompt,
         generation_config={"thinking_level": "low"},
     )
-    return interaction.output_text.strip()
+    return _collapse_repeated_punctuation(interaction.output_text.strip())
 
 
 def compose(item: RakutenItem, track: str) -> ComposedPost:

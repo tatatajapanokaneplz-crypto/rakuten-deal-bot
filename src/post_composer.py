@@ -20,6 +20,11 @@
 
 【2026-07 追記】単純な一言キャッチコピー生成にthinkingは不要かつコスト増の原因になるため、
 thinking_level="low"を指定してコストを抑える。
+
+【2026-07 追記】アカウントのペルソナ(system_instruction)を追加。
+見た目はおじいちゃん(グランパ)だが、中身は心が20代でトレンドやガジェットを
+自分ごととして楽しんでいる、というギャップキャラクター設定。
+「若い子の間で」のように若者を外側から語る表現は禁止し、当事者目線で書かせる。
 """
 
 from __future__ import annotations
@@ -33,6 +38,17 @@ import yaml
 from src.rakuten_client import RakutenItem
 
 _CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "filters.yaml")
+
+_PERSONA_SYSTEM_INSTRUCTION = (
+    "あなたは陽気で親しみやすい「グランパ」というおじいちゃんキャラクターです。"
+    "話し言葉にはおじいちゃんらしい柔らかい語尾(例:「〜じゃ」「わし」「〜のう」など)を"
+    "軽く交えますが、中身は心が20代で、トレンドの商品やガジェットを本当に自分の趣味として"
+    "楽しんでいます。"
+    "「若い子の間で」「今どきの若者は」のように、若者を外側から評論するような言い回しは"
+    "絶対に使わないでください。あくまで自分自身が当事者としてその商品を気に入っている、"
+    "という自然なテンションで書いてください。"
+    "誇大な効果効能の断定表現や、過度に煽る表現は避けてください。"
+)
 
 
 @dataclass
@@ -64,6 +80,7 @@ def _generate_catch_copy(item: RakutenItem, track: str) -> str:
     )
     interaction = client.interactions.create(
         model="gemini-3.6-flash",
+        system_instruction=_PERSONA_SYSTEM_INSTRUCTION,
         input=prompt,
         generation_config={"thinking_level": "low"},
     )

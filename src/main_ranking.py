@@ -7,6 +7,13 @@ config/filters.yaml のフィルタ条件(レビュー数・評価スコア・�
 【2026-07 変更】投稿はスレッド形式(本文+返信)。BUFFER_CHANNEL_ID_X は
 twitter、BUFFER_CHANNEL_ID_THREADS は threads として Buffer に渡す
 (createPostのmetadataキーがサービスごとに異なるため)。
+
+【2026-07 変更(投稿頻度の調整)】1回の実行で最大3件まとめて投稿していたが、
+「一気に投稿するのはアルゴリズム的にもフォロワー的にも良くない」との判断から、
+1回の実行につき1件のみ投稿する形に変更した。その代わり、ワークフロー側の
+実行回数を1日1回→3回(11:00/16:00/23:00 JST)に増やし、timesaleの実行時刻
+(9:00/13:00/20:00 JST)とずらすことで、1日6件程度の投稿を間隔を空けて
+配信するようにした(.github/workflows/ranking.yml参照)。
 """
 
 from __future__ import annotations
@@ -29,6 +36,9 @@ CHANNEL_SERVICE_MAP = {
     "BUFFER_CHANNEL_ID_X": "twitter",
     "BUFFER_CHANNEL_ID_THREADS": "threads",
 }
+
+# 1回の実行で投稿する件数の上限。バースト投稿を避けるため1に固定している。
+MAX_POSTS_PER_RUN = 1
 
 
 def _load_filters() -> dict:
@@ -85,7 +95,7 @@ def main(dry_run: bool = False) -> int:
                     print(f"[ERROR] 投稿失敗 channel={channel_id}: {result.error}")
 
             posted += 1
-            if posted >= 3:  # 1回の実行での投稿数上限(頻度の抑制)
+            if posted >= MAX_POSTS_PER_RUN:
                 break
 
         healthcheck.ping_success(healthcheck_url)

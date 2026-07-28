@@ -7,6 +7,12 @@
 【2026-07 変更】投稿はスレッド形式(本文+返信)。BUFFER_CHANNEL_ID_X は
 twitter、BUFFER_CHANNEL_ID_THREADS は threads として Buffer に渡す
 (createPostのmetadataキーがサービスごとに異なるため)。
+
+【2026-07 変更(投稿頻度の調整)】以前はキーワードごとに1件、最大3件を
+1回の実行でまとめて投稿していたが、「一気に投稿するのはアルゴリズム的にも
+フォロワー的にも良くない」との判断から、1回の実行につき1件のみ投稿する
+形に変更した(複数キーワードを順に試すのは、1件目のキーワードで良い候補が
+見つからなかった場合のフォールバックとして維持している)。
 """
 
 from __future__ import annotations
@@ -21,7 +27,8 @@ from src import healthcheck, link_checker, post_composer
 from src.buffer_client import BufferClient
 from src.rakuten_client import RakutenClient
 
-# 速報対象として検索するキーワード。実運用では複数キーワードをローテーションする想定。
+# 速報対象として検索するキーワード。1件目のキーワードで投稿できなかった場合の
+# フォールバックとして複数用意している(実際に投稿するのは1回の実行につき1件のみ)。
 SEARCH_KEYWORDS = ["タイムセール", "クーポン", "お買い物マラソン"]
 
 # env変数名 -> BufferのcreatePost.metadataキー(サービス名)の対応
@@ -29,6 +36,9 @@ CHANNEL_SERVICE_MAP = {
     "BUFFER_CHANNEL_ID_X": "twitter",
     "BUFFER_CHANNEL_ID_THREADS": "threads",
 }
+
+# 1回の実行で投稿する件数の上限。バースト投稿を避けるため1に固定している。
+MAX_POSTS_PER_RUN = 1
 
 
 def main(dry_run: bool = False) -> int:
@@ -42,6 +52,9 @@ def main(dry_run: bool = False) -> int:
 
         posted = 0
         for keyword in SEARCH_KEYWORDS:
+            if posted >= MAX_POSTS_PER_RUN:
+                break
+
             items = rakuten.search_items(keyword=keyword, hits=10)
             for item in items:
                 composed = post_composer.compose(item, track="timesale")
@@ -66,7 +79,7 @@ def main(dry_run: bool = False) -> int:
                         print(f"[ERROR] 投稿失敗 channel={channel_id}: {result.error}")
 
                 posted += 1
-                break  # 1キーワードにつき1商品のみ投稿(投稿頻度の抑制)
+                break  # このキーワードでの投稿は完了。次のキーワードには進まない
 
         healthcheck.ping_success(healthcheck_url)
         print(f"完了: {posted}件投稿")
